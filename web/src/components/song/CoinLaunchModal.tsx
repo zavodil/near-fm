@@ -111,6 +111,16 @@ export function CoinLaunchModal({ song, onLaunched }: Props) {
   const [suggesting, setSuggesting] = useState(false);
   const [preview, setPreview] = useState<unknown[] | null>(null);
 
+  // Each launchpad has its own limits and controls: fit the form to it.
+  useEffect(() => {
+    setSymbol((v) => v.slice(0, launchpad.limits.symbolMax));
+    setFeeMode((m) => (launchpad.features.feeModes.length === 0 || launchpad.features.feeModes.includes(m) ? m : "creator"));
+    setBuyTax((t) => Math.min(t, launchpad.features.taxMaxPct));
+    setSellTax((t) => Math.min(t, launchpad.features.taxMaxPct));
+    setPair(null);
+    setDevBuy("");
+  }, [launchpad]);
+
   const suggest = async () => {
     setSuggesting(true);
     setError(null);
@@ -151,7 +161,7 @@ export function CoinLaunchModal({ song, onLaunched }: Props) {
     if (!song.cover_image_url || !config) return;
     let cancelled = false;
     setIconState("loading");
-    compressIcon(song.cover_image_url, { hardCap: config.maxIconBytes - 64 })
+    compressIcon(song.cover_image_url, { hardCap: config.maxIconBytes - 64, sizes: config.iconSizes })
       .then((r) => { if (!cancelled) { setIcon(r.dataUri); setIconState("ready"); } })
       .catch(() => { if (!cancelled) setIconState("failed"); });
     return () => { cancelled = true; };
@@ -161,7 +171,7 @@ export function CoinLaunchModal({ song, onLaunched }: Props) {
     if (!file || !config) return;
     setIconState("loading");
     try {
-      const r = await compressIcon(file, { hardCap: config.maxIconBytes - 64 });
+      const r = await compressIcon(file, { hardCap: config.maxIconBytes - 64, sizes: config.iconSizes });
       setIcon(r.dataUri);
       setIconState("ready");
     } catch (e) {
@@ -173,11 +183,15 @@ export function CoinLaunchModal({ song, onLaunched }: Props) {
   const symbolUpper = symbol.toUpperCase();
   const pairOption = config?.pairs.find((p) => p.tokenId === (pair ?? config.pairs.find((x) => x.native)?.tokenId));
   const isNativePair = pairOption?.native ?? true;
+  const transferTax = launchpad.features.taxMode === "transfer";
+  // Without a fee-destination selector, the split below is where all fees go, tax or not.
+  const splitAlwaysApplies = launchpad.features.feeModes.length === 0;
   const tax: Tax | null = useMemo(() => {
-    if (buyTax === 0 && sellTax === 0) return null;
+    const sell = transferTax ? buyTax : sellTax;
+    if (buyTax === 0 && sell === 0 && !splitAlwaysApplies) return null;
     const split = customSplit ?? launchpad.taxPresets[taxPreset]?.split ?? { creator_bps: 10000, burn_bps: 0, holders_bps: 0 };
-    return { buy_bps: buyTax * 100, sell_bps: sellTax * 100, ...split };
-  }, [buyTax, sellTax, customSplit, taxPreset, launchpad]);
+    return { buy_bps: buyTax * 100, sell_bps: sell * 100, ...split };
+  }, [buyTax, sellTax, transferTax, splitAlwaysApplies, customSplit, taxPreset, launchpad]);
   const devBuyYocto = useMemo(() => {
     if (!isNativePair) return null;
     const n = parseFloat(devBuy);
@@ -259,7 +273,7 @@ export function CoinLaunchModal({ song, onLaunched }: Props) {
       }
       setBusy("Preparing the transaction…");
       const nextId = await launchpad.nextLaunchId(view);
-      const txs = launchpad.buildTransactions(form, quote.totalYocto, nextId);
+      const txs = await launchpad.buildTransactions(form, quote.totalYocto, nextId, { songUuid: song.uuid });
       const { launch_enabled } = await dryRunSongCoin(song.uuid, launchpad.id, txs, quote);
       if (!launch_enabled) {
         setBusy(null);
@@ -301,12 +315,12 @@ export function CoinLaunchModal({ song, onLaunched }: Props) {
         setBusy(form.devBuyYocto ? "Opening the pool and making your first buy…" : "Opening the pool…");
         await new Promise((r) => setTimeout(r, 2000));
         try {
-          const st = await launchpad.launchStatus(view, nextId);
+          const st = await launchpad.launchStatus(view, { launchId: nextId, tokenAccount: coin.token_account });
           if (st.done) { coin = { ...coin, status: "live" }; break; }
           stalledPolls = st.inFlight ? 0 : stalledPolls + 1;
           if (stalledPolls >= 8) {
             setBusy(null);
-            setError(`The launch stopped before the pool opened. Nothing is lost: open $${coin.symbol} on ${launchpad.name} and press Resume, or wait — it finishes on its own.`);
+            setError(`The launch stopped before the pool opened. Nothing is lost: open $${coin.symbol} on ${launchpad.name} — it usually finishes on its own, and the launchpad can resume it.`);
             onLaunched(coin);
             return;
           }
@@ -397,10 +411,10 @@ export function CoinLaunchModal({ song, onLaunched }: Props) {
               <span className={label}>Ticker</span>
               <div className="flex items-center">
                 <span className="px-3 py-2 rounded-l-lg bg-white/[0.06] border border-r-0 border-white/[0.08] text-sm text-slate-400">$</span>
-                <input value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12))} className={`${field} rounded-l-none uppercase`} />
+                <input value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, launchpad.limits.symbolMax))} className={`${field} rounded-l-none uppercase`} />
               </div>
               {problems.symbol && <p className="text-xs text-red-400 mt-1">{problems.symbol}</p>}
-              <p className={hint}>The $TICKER people trade by, {launchpad.limits.symbolHint}. The token account is derived from it (e.g. nit.nearlytrade.near).</p>
+              <p className={hint}>The $TICKER people trade by, {launchpad.limits.symbolHint}. The token account is derived from it (e.g. {launchpad.copy.tokenAccountExample}).</p>
             </div>
           </div>
         </div>
@@ -411,32 +425,34 @@ export function CoinLaunchModal({ song, onLaunched }: Props) {
         </div>
 
         {/* Fees */}
-        <div className="mb-5">
-          <span className={label}>Pool fees go to</span>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" className={chip(feeMode === "creator")} onClick={() => setFeeMode("creator")}>Your wallet</button>
-            <button type="button" className={chip(feeMode === "other")} onClick={() => setFeeMode("other")}>Another wallet</button>
-            <button type="button" className={chip(feeMode === "holders")} onClick={() => setFeeMode("holders")}>Holders</button>
-          </div>
-          {feeMode === "other" && (
-            <div className="mt-2">
-              <input value={feeTo} onChange={(e) => setFeeTo(e.target.value.toLowerCase())} placeholder="account.near" className={field} />
-              {problems.feeTo && <p className="text-xs text-red-400 mt-1">{problems.feeTo}</p>}
+        {launchpad.features.feeModes.length > 0 && (
+          <div className="mb-5">
+            <span className={label}>Pool fees go to</span>
+            <div className="flex flex-wrap gap-2">
+              {launchpad.features.feeModes.includes("creator") && <button type="button" className={chip(feeMode === "creator")} onClick={() => setFeeMode("creator")}>Your wallet</button>}
+              {launchpad.features.feeModes.includes("other") && <button type="button" className={chip(feeMode === "other")} onClick={() => setFeeMode("other")}>Another wallet</button>}
+              {launchpad.features.feeModes.includes("holders") && <button type="button" className={chip(feeMode === "holders")} onClick={() => setFeeMode("holders")}>Holders</button>}
             </div>
-          )}
-          <p className={hint}>Every trade pays a 1% pool fee; 70% of it is the creator share, paid out automatically about every hour. <b>Your wallet</b> — to you. <b>Another wallet</b> — to any NEAR account you name. <b>Holders</b> — sold for the pair asset and split among holders by balance. Locked at launch.</p>
-        </div>
+            {feeMode === "other" && (
+              <div className="mt-2">
+                <input value={feeTo} onChange={(e) => setFeeTo(e.target.value.toLowerCase())} placeholder="account.near" className={field} />
+                {problems.feeTo && <p className="text-xs text-red-400 mt-1">{problems.feeTo}</p>}
+              </div>
+            )}
+            <p className={hint}>{launchpad.copy.fees}</p>
+          </div>
+        )}
 
         {/* Tax */}
         <div className="mb-5">
-          <span className={label}>Tax <span className="text-slate-600">optional, up to 4% a side, locked at launch</span></span>
-          <p className={`${hint} mb-2`}>An extra cut taken in the token on every buy and/or sell on top of the 1% pool fee (max 5% total). Wallet-to-wallet transfers are never taxed. Where it goes: <b>You</b> — sold and sent to you; <b>Burn</b> — removed from supply; <b>Holders</b> — paid pro rata to holders.</p>
-          <div className="grid grid-cols-2 gap-3">
-            {([["Buy", buyTax, setBuyTax], ["Sell", sellTax, setSellTax]] as const).map(([lbl, val, set]) => (
+          <span className={label}>Tax <span className="text-slate-600">optional, up to {launchpad.features.taxMaxPct}% {transferTax ? "per transfer" : "a side"}, locked at launch</span></span>
+          <p className={`${hint} mb-2`}>{launchpad.copy.tax} Where it goes: <b>You</b> — sold and sent to you; <b>Burn</b> — removed from supply; <b>Holders</b> — paid pro rata to holders.</p>
+          <div className={`grid ${transferTax ? "grid-cols-1" : "grid-cols-2"} gap-3`}>
+            {(transferTax ? [["Every transfer", buyTax, setBuyTax]] as const : [["Buy", buyTax, setBuyTax], ["Sell", sellTax, setSellTax]] as const).map(([lbl, val, set]) => (
               <div key={lbl}>
                 <span className="text-[11px] text-slate-500">{lbl}</span>
-                <div className="flex gap-1 mt-1">
-                  {[0, 1, 2, 3, 4].map((n) => (
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {Array.from({ length: launchpad.features.taxMaxPct + 1 }, (_, n) => n).map((n) => (
                     <button key={n} type="button" className={chip(val === n)} onClick={() => set(n)}>{n === 0 ? "Off" : `${n}%`}</button>
                   ))}
                 </div>
@@ -445,7 +461,8 @@ export function CoinLaunchModal({ song, onLaunched }: Props) {
           </div>
           {tax && (
             <div className="mt-3">
-              <span className="text-[11px] text-slate-500">Tax goes to</span>
+              <span className="text-[11px] text-slate-500">{splitAlwaysApplies ? "Fees and tax go to" : "Tax goes to"}</span>
+              {splitAlwaysApplies && <p className={`${hint} mb-1`}>{launchpad.copy.fees}</p>}
               <div className="flex flex-wrap gap-2 mt-1">
                 {launchpad.taxPresets.map((p, i) => (
                   <button key={p.label} type="button" className={chip(!customSplit && taxPreset === i)} onClick={() => { setTaxPreset(i); setCustomSplit(null); }}>{p.label}</button>
@@ -477,7 +494,7 @@ export function CoinLaunchModal({ song, onLaunched }: Props) {
         {config && config.pairs.length > 1 && (
           <div className="mb-5">
             <span className={label}>Pair it with <span className="text-slate-600">what buyers pay in</span></span>
-            <p className={`${hint} mb-2`}>The asset the pool holds against your token and that fees arrive in. NEAR is the default; a USDC/USDT pair opens at the same ~$5K value. First buy is only available on NEAR.</p>
+            <p className={`${hint} mb-2`}>{launchpad.copy.pair}</p>
             <div className="flex flex-wrap gap-2">
               {config.pairs.map((p) => (
                 <button key={p.tokenId} type="button" className={chip((pairOption?.tokenId ?? "") === p.tokenId)} onClick={() => { setPair(p.tokenId); if (!p.native) setDevBuy(""); }}>{p.symbol}</button>
@@ -489,13 +506,13 @@ export function CoinLaunchModal({ song, onLaunched }: Props) {
         {/* First buy */}
         {isNativePair && config && (
           <div className="mb-5">
-            <span className={label}>Your first buy <span className="text-slate-600">optional, max {fmtNear(config.devBuyCapYocto, 1)} NEAR (4% of supply)</span></span>
+            <span className={label}>Your first buy <span className="text-slate-600">optional, max {fmtNear(config.devBuyCapYocto, 1)} NEAR ({config.devBuyCapLabel})</span></span>
             <div className="flex items-center">
               <input type="number" min={0} step="0.1" value={devBuy} onChange={(e) => setDevBuy(e.target.value)} placeholder="0" className={`${field} rounded-r-none`} />
               <span className="px-3 py-2 rounded-r-lg bg-white/[0.06] border border-l-0 border-white/[0.08] text-sm text-slate-400">NEAR</span>
             </div>
             {problems.devBuy && <p className="text-xs text-red-400 mt-1">{problems.devBuy}</p>}
-            <p className={hint}>Buys tokens for you from the pool the moment it opens, at the opening price, before anyone else. Paid on top of the launch cost; pays the pool fee and any buy tax like every buy.</p>
+            <p className={hint}>{launchpad.copy.firstBuy}</p>
           </div>
         )}
 

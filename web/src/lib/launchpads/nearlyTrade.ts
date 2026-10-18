@@ -51,9 +51,22 @@ export const nearlyTrade: Launchpad = {
   limits: {
     nameMax: 32,
     symbolPattern: /^[A-Z0-9]{2,12}$/,
+    symbolMax: 12,
     symbolHint: "2 to 12 letters or digits",
     descriptionMax: 500,
     linkMax: 200,
+  },
+  features: {
+    feeModes: ["creator", "other", "holders"],
+    taxMode: "buy-sell",
+    taxMaxPct: 4,
+  },
+  copy: {
+    fees: "Every trade pays a 1% pool fee; 70% of it is the creator share, paid out automatically about every hour. Your wallet — to you. Another wallet — to any NEAR account you name. Holders — sold for the pair asset and split among holders by balance. Locked at launch.",
+    tax: "An extra cut taken in the token on every buy and/or sell on top of the 1% pool fee (max 5% total). Wallet-to-wallet transfers are never taxed.",
+    pair: "The asset the pool holds against your token and that fees arrive in. NEAR is the default; a USDC/USDT pair opens at the same ~$5K value. First buy is only available on NEAR.",
+    firstBuy: "Buys tokens for you from the pool the moment it opens, at the opening price, before anyone else. Paid on top of the launch cost; pays the pool fee and any buy tax like every buy.",
+    tokenAccountExample: "nit.nearlytrade.near",
   },
   taxPresets: [
     { label: "Balanced", split: { creator_bps: 3300, burn_bps: 3300, holders_bps: 3400 } },
@@ -90,6 +103,7 @@ export const nearlyTrade: Launchpad = {
       maxIconBytes: config.max_icon_bytes,
       maxTaxBps: 400,
       devBuyCapYocto: cap,
+      devBuyCapLabel: "4% of supply",
       pairs,
       openingFdvLabel: "1,000 NEAR",
     };
@@ -117,7 +131,7 @@ export const nearlyTrade: Launchpad = {
     return Number(await view(FACTORY, "get_num_launches", {}));
   },
 
-  buildTransactions(form, totalYocto): LaunchTx[] {
+  async buildTransactions(form, totalYocto): Promise<LaunchTx[]> {
     // One transaction: the factory carries out token, pool and any first buy
     // itself. (`resume` exists only for a stalled launch and panics with
     // "nothing to resume" otherwise — nearly.trade's own UI sends it blindly
@@ -125,8 +139,8 @@ export const nearlyTrade: Launchpad = {
     return [{ contractId: FACTORY, method: "launch", args: { args: launchArgs(form) }, gas: LAUNCH_GAS, deposit: totalYocto }];
   },
 
-  async launchStatus(view, launchId) {
-    const r = (await view(FACTORY, "get_launch", { launch_id: String(launchId) })) as
+  async launchStatus(view, ref) {
+    const r = (await view(FACTORY, "get_launch", { launch_id: String(ref.launchId) })) as
       | { step?: string; inflight?: boolean; token?: string }
       | null;
     return { done: r?.step === "Done", inFlight: !!r?.inflight, tokenAccount: r?.token ?? null };

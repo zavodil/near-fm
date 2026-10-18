@@ -1212,6 +1212,14 @@ export async function suggestSongCoin(uuid: string): Promise<{ name: string; sym
   return fetchApi(`/api/songs/${uuid}/coins/suggest`, { method: "POST" });
 }
 
+/** Host the coin's off-chain metadata (NEP-148 `reference`); answers its URL and sha256. */
+export async function uploadCoinReference(
+  uuid: string,
+  body: { description?: string; about?: string; website?: string; twitter?: string; telegram?: string },
+): Promise<{ url: string; hash_base64: string }> {
+  return fetchApi(`/api/songs/${uuid}/coins/reference`, { method: "POST", body: JSON.stringify(body) });
+}
+
 /** Report the exact launch transactions before signing; tells whether launching is enabled. */
 export async function dryRunSongCoin(uuid: string, launchpad: string, transactions: unknown, quote: unknown): Promise<{ launch_enabled: boolean }> {
   return fetchApi(`/api/songs/${uuid}/coins/dry-run`, { method: "POST", body: JSON.stringify({ launchpad, transactions, quote }) });

@@ -105,9 +105,15 @@ pub async fn lookup(_http: &reqwest::Client, rpc_url: &str, token_account: &str)
             .flatten()
             .map(|l| l.creator);
         ("nearly.trade".to_string(), creator, Some(format!("https://nearly.trade/{token_account}")))
+    } else if super::just_hoot::is_factory_token(token_account) {
+        let creator = super::just_hoot::get_launch_by_token(rpc_url, token_account)
+            .await
+            .ok()
+            .flatten()
+            .map(|l| l.creator);
+        (super::just_hoot::ID.to_string(), creator, Some(format!("https://justhoot.fun/p/{token_account}")))
     } else {
-        let source = if token_account.ends_with(".launchpad.justhoot.near") { "justhoot.fun" } else { "external" };
-        (source.to_string(), None, Some(rhea_swap_url(token_account)))
+        ("external".to_string(), None, Some(rhea_swap_url(token_account)))
     };
 
     Ok(TokenInfo {

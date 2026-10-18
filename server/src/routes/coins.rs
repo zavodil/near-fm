@@ -576,3 +576,128 @@ pub async fn link(
     }
     Ok(Json(coin))
 }
+
+// ── Hosted token metadata ("reference" JSON) ──
+//
+// JustHoot keeps a coin's description and links off chain: the token's
+// ft_metadata carries a `reference` URL and the sha256 of its bytes. Their
+// own site uploads that JSON to a wallet backend that refuses other origins,
+// so near.fm hosts it for coins launched from songs.
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReferenceRequest {
+    pub description: Option<String>,
+    pub about: Option<String>,
+    pub website: Option<String>,
+    pub twitter: Option<String>,
+    pub telegram: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ReferenceResponse {
+    pub url: String,
+    /// sha256 of the served bytes, base64 — what NEP-148 `reference_hash` wants.
+    pub hash_base64: String,
+}
+
+fn reference_url(frontend_url: &str, hash: &str) -> String {
+    // The API host, derived from the site: https://near.fm → https://api.near.fm
+    let api = frontend_url.replacen("://", "://api.", 1);
+    format!("{}/api/coins/reference/{hash}", api.trim_end_matches('/'))
+}
+
+fn clean_link(raw: Option<&str>) -> Result<Option<String>, String> {
+    let Some(v) = raw.map(str::trim).filter(|v| !v.is_empty()) else { return Ok(None) };
+    if v.len() > 200 || !(v.starts_with("https://") || v.starts_with("http://")) || v.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return Err("links must be http(s) URLs up to 200 characters".to_string());
+    }
+    Ok(Some(v.to_string()))
+}
+
+/// POST /api/songs/:uuid/coins/reference — store the coin's off-chain
+/// metadata; answers the URL and hash to put in the launch.
+pub async fn put_reference(
+    State(state): State<AppState>,
+    extensions: Extensions,
+    Path(uuid): Path<String>,
+    Json(req): Json<ReferenceRequest>,
+) -> Result<Json<ReferenceResponse>, ApiError> {
+    let claims = require_auth(&extensions).map_err(|s| (s, "Authentication required".to_string()))?;
+    let song = load_song(&state, &uuid).await?;
+    require_near_author(&state, claims.user_id, &song).await?;
+    let bad = |e: String| (StatusCode::BAD_REQUEST, e);
+
+    let text = |v: Option<&String>, max: usize| v.map(|d| launchpads::ai_check::clean(d, max)).filter(|d| !d.is_empty());
+    let mut body = serde_json::Map::new();
+    if let Some(d) = text(req.description.as_ref(), 500) {
+        body.insert("description".into(), serde_json::Value::String(d));
+    }
+    if let Some(a) = text(req.about.as_ref(), 1000) {
+        body.insert("about".into(), serde_json::Value::String(a));
+    }
+    for (key, raw) in [("website", &req.website), ("twitter", &req.twitter), ("telegram", &req.telegram)] {
+        if let Some(u) = clean_link(raw.as_deref()).map_err(bad)? {
+            body.insert(key.into(), serde_json::Value::String(u));
+        }
+    }
+    if body.is_empty() {
+        return Err(bad("nothing to store".to_string()));
+    }
+    let bytes = serde_json::to_vec(&serde_json::Value::Object(body)).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let digest = <sha2::Sha256 as sha2::Digest>::digest(&bytes);
+    let hash = hex::encode(digest);
+    let hash_base64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, digest);
+    let body_text = String::from_utf8(bytes).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    sqlx::query("INSERT INTO coin_references (hash, body, song_id, user_id) VALUES ($1, $2, $3, $4) ON CONFLICT (hash) DO NOTHING")
+        .bind(&hash)
+        .bind(&body_text)
+        .bind(song.id)
+        .bind(claims.user_id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    tracing::info!(song_id = song.id, %hash, bytes = body_text.len(), "Coin reference stored");
+    Ok(Json(ReferenceResponse { url: reference_url(&state.config.frontend_url, &hash), hash_base64 }))
+}
+
+/// GET /api/coins/reference/:hash — the exact bytes whose sha256 is `hash`.
+/// Public and cross-origin: launchpads and wallets fetch it from anywhere.
+pub async fn get_reference(State(state): State<AppState>, Path(hash): Path<String>) -> Result<axum::response::Response, ApiError> {
+    use axum::response::IntoResponse;
+    if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err((StatusCode::NOT_FOUND, "Not found".to_string()));
+    }
+    let body: Option<String> = sqlx::query_scalar("SELECT body FROM coin_references WHERE hash = $1")
+        .bind(&hash)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let body = body.ok_or((StatusCode::NOT_FOUND, "Not found".to_string()))?;
+    Ok((
+        [
+            (axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8"),
+            (axum::http::header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+            (axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
+        ],
+        body,
+    )
+        .into_response())
+}
+
+#[cfg(test)]
+mod reference_tests {
+    use super::*;
+
+    #[test]
+    fn url_points_at_the_api_host() {
+        let u = reference_url("https://near.fm", &"a".repeat(64));
+        assert_eq!(u, format!("https://api.near.fm/api/coins/reference/{}", "a".repeat(64)));
+        assert!(u.len() <= 120, "JustHoot's deposit quote assumes a short reference URL");
+        assert!(clean_link(Some(" https://x.com/a ")).unwrap().is_some());
+        assert!(clean_link(Some("x.com/a")).is_err());
+        assert!(clean_link(Some("javascript:alert(1)")).is_err());
+        assert!(clean_link(Some("")).unwrap().is_none());
+    }
+}

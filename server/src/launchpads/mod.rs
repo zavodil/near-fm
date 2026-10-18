@@ -9,6 +9,7 @@
 //! the song's author, and links it to the song.
 
 pub mod ai_check;
+pub mod just_hoot;
 pub mod nearly_trade;
 pub mod token;
 
@@ -27,7 +28,7 @@ pub struct FoundLaunch {
 }
 
 /// Launchpads near.fm can link. Ids are stored in `song_coins.launchpad`.
-pub const SUPPORTED: &[&str] = &[nearly_trade::ID];
+pub const SUPPORTED: &[&str] = &[nearly_trade::ID, just_hoot::ID];
 
 pub fn is_supported(id: &str) -> bool {
     SUPPORTED.contains(&id)
@@ -44,6 +45,7 @@ pub async fn find_launch(
 ) -> Result<Option<FoundLaunch>, String> {
     match launchpad {
         nearly_trade::ID => nearly_trade::find_launch(rpc_url, creator, symbol, since_ms).await,
+        just_hoot::ID => just_hoot::find_launch(rpc_url, creator, symbol, since_ms).await,
         other => Err(format!("unsupported launchpad '{other}'")),
     }
 }
@@ -52,6 +54,7 @@ pub async fn find_launch(
 pub async fn get_launch(launchpad: &str, rpc_url: &str, token_account: &str) -> Result<Option<FoundLaunch>, String> {
     match launchpad {
         nearly_trade::ID => nearly_trade::get_launch_by_token(rpc_url, token_account).await,
+        just_hoot::ID => just_hoot::get_launch_by_token(rpc_url, token_account).await,
         other => Err(format!("unsupported launchpad '{other}'")),
     }
 }
@@ -60,6 +63,7 @@ pub async fn get_launch(launchpad: &str, rpc_url: &str, token_account: &str) -> 
 pub fn getter_trade_url(launchpad: &str, token_account: &str) -> Option<String> {
     match launchpad {
         nearly_trade::ID => Some(format!("https://nearly.trade/{token_account}")),
+        just_hoot::ID => Some(format!("https://justhoot.fun/p/{token_account}")),
         _ => None,
     }
 }

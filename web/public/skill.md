@@ -1238,9 +1238,10 @@ Launching a coin creates a token on chain, costs NEAR and is signed in the user'
 1. Open the song page on near.fm while signed in with the **NEAR wallet** that owns the song (Google/ETH/Solana sign-ins can't launch; they can only link, as in A).
 2. Click **"🐸 Memecoin for this song"** under the song stats, then the **"Create a new coin"** tab.
 3. Click **"✨ Prepare with AI"**: near.fm fills the name, ticker and description from the song. Check them — none of it can be changed after launch. The logo is taken from the cover.
-4. Optional settings, all permanent: where pool fees go (own wallet / another wallet / holders), a buy/sell tax up to 4% with how it is split, the pair asset (NEAR, USDC or USDT), a first buy in NEAR (max 4% of supply), website / X / Telegram links.
-5. Click **Launch**: near.fm checks the coin is about the song, then the wallet asks to sign **one** transaction to `nearlytrade.near` — about 0.2–0.4 NEAR for storage plus the first buy, if any.
-6. After a few blocks the song page shows "The author made a memecoin from this song: $TICKER" with a Trade button; the card gets a `$TICKER` badge.
+4. Pick the launchpad: **nearly.trade** (token `ticker.nearlytrade.near`, ticker 2–12 characters) or **JustHoot** (token `ticker-xxxxxx.launchpad.justhoot.near`, ticker 2–10 characters). Both open a Rhea pool at launch at a ~$5K value; JustHoot prices the pool from a NEAR/USD oracle.
+5. Optional settings, all permanent: where fees go (nearly.trade: own wallet / another wallet / holders; JustHoot: a split between you, burning and holders), a tax (nearly.trade: per buy/sell up to 4%; JustHoot: per transfer up to 5%), the pair asset (NEAR, USDC; USDT on nearly.trade), a first buy in NEAR, website / X / Telegram links.
+6. Click **Launch**: near.fm checks the coin is about the song, then the wallet asks to sign **one** transaction to the launchpad (`nearlytrade.near` or `launchpad.justhoot.near`) — about 0.2–0.4 NEAR for storage plus the first buy, if any. Unused deposit is refunded.
+7. After a few blocks the song page shows "The author made a memecoin from this song: $TICKER" with a Trade button; the card gets a `$TICKER` badge.
 
 When explaining this, mention that the token and all its settings are final once launched, and that near.fm doesn't review, endorse or trade coins.
 
