@@ -21,7 +21,7 @@ pub async fn recalculate_reputation(pool: &PgPool) -> Result<(), sqlx::Error> {
     let result = sqlx::query(
         r#"
         UPDATE users
-        SET reputation_score = sub.new_reputation,
+        SET reputation_score = sub.new_reputation::FLOAT8,
             updated_at = NOW()
         FROM (
             SELECT
@@ -67,13 +67,16 @@ pub async fn recalculate_reputation(pool: &PgPool) -> Result<(), sqlx::Error> {
             ) fol ON fol.followed_id = u.id
         ) sub
         WHERE users.id = sub.id
+          -- Only rows whose reputation moved: rewriting every user every
+          -- 10 minutes was pure WAL churn.
+          AND users.reputation_score IS DISTINCT FROM sub.new_reputation::FLOAT8
         "#,
     )
     .execute(pool)
     .await?;
 
     tracing::info!(
-        "Reputation recalculated for {} users",
+        "Reputation recalculated: {} users changed",
         result.rows_affected()
     );
 

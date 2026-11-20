@@ -19,6 +19,9 @@ services:
   postgres-mainnet:
     restart: unless-stopped
     image: postgres:17
+    # Fewer checkpoints mean fewer full-page images in the WAL; lz4 compresses
+    # the ones left. The database is tiny, so this mostly spares the disks.
+    command: ["postgres", "-c", "checkpoint_timeout=15min", "-c", "max_wal_size=4GB", "-c", "wal_compression=lz4"]
     environment:
       POSTGRES_DB: nearfm
       POSTGRES_USER: nearfm
