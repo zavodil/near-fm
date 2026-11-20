@@ -1,5 +1,6 @@
 services:
   postgres:
+    restart: unless-stopped
     image: postgres:17
     environment:
       POSTGRES_DB: nearfm
@@ -16,6 +17,7 @@ services:
       retries: 5
 
   postgres-mainnet:
+    restart: unless-stopped
     image: postgres:17
     environment:
       POSTGRES_DB: nearfm
@@ -32,6 +34,7 @@ services:
       retries: 5
 
   server:
+    restart: unless-stopped
     build: ./server
     ports:
       - "8477:8477"
@@ -70,6 +73,7 @@ services:
       - ./video:/app/video
 
   web:
+    restart: unless-stopped
     build:
       context: ./web
       args:
